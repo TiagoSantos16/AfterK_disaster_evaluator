@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { CheckCircle2, ChevronLeft, ChevronRight, Globe2, MapPinned } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Globe2 } from "lucide-react";
 
-import { BasemapMode, DatasetConfig, DamageClass, DamagePoint, DatasetVariant, IncidentNote, MapNote, TemporalState } from "../types/dataset";
+import { BasemapMode, DatasetConfig, DamageClass, DamagePoint, IncidentNote, MapNote, TimelineStatus } from "../types/dataset";
 import { CategoryColors } from "../config/categoryColors";
+import { SOURCE_LABELS, CitySatelliteSource, isDemoSourceAvailable } from "../config/cities";
 
 type IncidentAnnotation = {
   priority: boolean;
@@ -12,24 +13,27 @@ type IncidentAnnotation = {
 type SidebarProps = {
   datasets: DatasetConfig[];
   activeDataset: DatasetConfig;
-  activeVariantId: string;
   basemapMode: BasemapMode;
   activeFilters: Record<DamageClass, boolean>;
   points: DamagePoint[];
   mapNotes: MapNote[];
   selectedPoint: DamagePoint | null;
   incidentAnnotations: Record<string, IncidentAnnotation>;
-  dataSourceLabel: string;
   collapsed: boolean;
-  temporalState: TemporalState;
   categoryColors: CategoryColors;
-  onTemporalStateChange: (state: TemporalState) => void;
+  timelineStatus: TimelineStatus;
   onToggleCollapse: () => void;
   onDatasetChange: (datasetId: string) => void;
-  onVariantChange: (variantId: string) => void;
   onBasemapChange: (mode: BasemapMode) => void;
   onToggleFilter: (damageClass: DamageClass) => void;
   onCategoryColorChange: (damageClass: DamageClass, color: string) => void;
+  source: CitySatelliteSource;
+  onSourceChange: (source: CitySatelliteSource) => void;
+  demoMode: boolean;
+  activeCityId: string;
+  onCitySelect: (id: string) => void;
+  segmentationEnabled: boolean;
+  onSegmentationToggle: (enabled: boolean) => void;
 };
 
 const filterLabels: Array<{ key: DamageClass; label: string }> = [
@@ -49,24 +53,27 @@ const basemapLabels: Array<{ key: BasemapMode; label: string; description: strin
 function Sidebar({
   datasets,
   activeDataset,
-  activeVariantId,
   basemapMode,
   activeFilters,
   points,
   mapNotes,
   selectedPoint,
   incidentAnnotations,
-  dataSourceLabel,
   collapsed,
-  temporalState,
   categoryColors,
-  onTemporalStateChange,
+  timelineStatus,
   onToggleCollapse,
   onDatasetChange,
-  onVariantChange,
   onBasemapChange,
   onToggleFilter,
   onCategoryColorChange,
+  source,
+  onSourceChange,
+  demoMode,
+  activeCityId,
+  onCitySelect,
+  segmentationEnabled,
+  onSegmentationToggle,
 }: SidebarProps) {
   const metrics = useMemo(() => {
     const total = points.length;
@@ -82,51 +89,43 @@ function Sidebar({
       <div className="panel-scroll">
         <div className="panel-header">
           <div>
-            <p className="eyebrow">GeoAI Municipal Damage Assessment</p>
+            <p className="eyebrow">Municipal damage assessment</p>
             <h1>Disaster Impact Dashboard</h1>
-            <p className="subtitle">{activeDataset.name}</p>
+            <p className="subtitle">{activeDataset.city}</p>
           </div>
           <button type="button" className="icon-button" onClick={onToggleCollapse} aria-label="Collapse sidebar">
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
         </div>
-        <p className="subtitle panel-source">Data source: {dataSourceLabel}</p>
+        <p className="subtitle panel-source">Data source: {SOURCE_LABELS[source]}</p>
+        <p className="subtitle panel-source">
+          {timelineStatus === "live"
+            ? "Timeline: live satellite captures"
+            : timelineStatus === "loading"
+              ? "Timeline: loading…"
+              : "Timeline: offline fallback"}
+        </p>
 
-        <section className="control-group">
+<section className="control-group">
           <h2>
-            <MapPinned size={14} /> Source & Date
+            <Globe2 size={14} /> Source
           </h2>
-          <label className="form-label" htmlFor="dataset-select">
-            Source
-          </label>
           <select
-            id="dataset-select"
             className="field"
-            value={activeDataset.id}
-            onChange={(event) => onDatasetChange(event.target.value)}
+            value={source}
+            onChange={(e) => onSourceChange(e.target.value as CitySatelliteSource)}
           >
-            {datasets.map((dataset) => (
-              <option key={dataset.id} value={dataset.id}>
-                {dataset.name} - {dataset.city}
-              </option>
-            ))}
+            <option value="sentinel-2-rgb">Copernicus Sentinel-2 RGB</option>
+            <option value="sentinel-2-swir">Copernicus Sentinel-2 SWIR</option>
+            <option value="sentinel-2-cir">Copernicus Sentinel-2 CIR</option>
+            <option value="sentinel-2-ndvi">Copernicus Sentinel-2 NDVI</option>
+            <option value="esri">Esri World Imagery</option>
           </select>
-
-          <label className="form-label" htmlFor="date-select">
-            Date
-          </label>
-          <select
-            id="date-select"
-            className="field"
-            value={activeVariantId}
-            onChange={(event) => onVariantChange(event.target.value)}
-          >
-            {activeDataset.variants.map((variant) => (
-              <option key={variant.id} value={variant.id}>
-                {variant.date} - {variant.label}
-              </option>
-            ))}
-          </select>
+          {demoMode && !isDemoSourceAvailable(source) && (
+            <p className="field-hint">
+              {SOURCE_LABELS[source]} is not included in this hosted demo. Clone the repo and run it locally to see it.
+            </p>
+          )}
         </section>
 
         <section className="control-group">
@@ -144,15 +143,19 @@ function Sidebar({
                 <span>{mode.label}</span>
                 <small>{mode.description}</small>
               </button>
-            ))}
+))}
           </div>
+        </section>
 
+        <section className="control-group">
+          <h2>
+            <Globe2 size={14} /> Overlays
+          </h2>
           <button
             type="button"
-            className="toggle-button is-off"
-            disabled
-            aria-disabled="true"
-            title="Segmentation overlay requires a trained model; will enable after model training."
+            className={`toggle-button ${segmentationEnabled ? "is-on" : "is-off"}`}
+            onClick={() => onSegmentationToggle(!segmentationEnabled)}
+            aria-pressed={segmentationEnabled}
             style={{
               display: "flex",
               alignItems: "center",
@@ -161,13 +164,13 @@ function Sidebar({
               marginTop: "12px",
               width: "100%",
               justifyContent: "center",
-              border: "1px solid #ccc",
-              backgroundColor: "#f9fafb",
-              cursor: "not-allowed",
+              border: "1px solid var(--hairline)",
+              backgroundColor: "var(--panel-bg)",
+              cursor: "pointer",
             }}
           >
-            <span className="toggle-dot is-off" />
-            Segmentation Overlay: OFF - model pending
+            <span className={`toggle-dot ${segmentationEnabled ? "is-on" : "is-off"}`} />
+            Damage points: {segmentationEnabled ? "ON" : "OFF"}
           </button>
         </section>
 

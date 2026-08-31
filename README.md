@@ -10,9 +10,17 @@ The map works without the backend and falls back to embedded demo data if the AP
 
 ## Try it
 
-The dashboard is hosted on GitHub Pages: [AfterK Disaster Evaluator]( https://tiagosantos16.github.io/AfterK_disaster_evaluator/)
+The dashboard is hosted on GitHub Pages: [AfterK Disaster Evaluator](https://tiagosantos16.github.io/AfterK_disaster_evaluator/)
 
-Run locally:
+The live demo runs without a backend — the map, damage points, timeline, and satellite imagery all work from static files committed to the repo.
+
+The demo ships with satellite images downloaded ahead of time, so every zone and date is covered. To keep the page light it includes only a couple of the band views; for the full set of data sources, clone the repo and run it locally.
+
+### Run locally
+
+You need Python 3.11+ and Node 20+.
+
+**Frontend** (no backend required — falls back to demo data):
 
 ```
 cd frontend
@@ -20,12 +28,38 @@ npm install
 npm run dev
 ```
 
+Open http://localhost:5173.
+
+**Backend** (optional — needed for live Sentinel-2 imagery from Copernicus):
+
+```
+cd backend
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Copy `.env.example` to `.env` and fill in your Copernicus CDSE credentials (free at https://dataspace.copernicus.eu/). Then:
+
+```
+uvicorn app.main:app --reload --port 8000
+```
+
+The frontend will connect to the backend automatically when `VITE_API_BASE_URL=http://localhost:8000` is set in `.env`.
+
+**Tests:**
+
+```
+cd frontend && npm test        # 22 vitest tests
+cd backend && python -m pytest -q   # 21 pytest tests
+```
+
 ## Project snapshot
 
 - React 18, TypeScript, Vite, deck.gl, MapLibre GL
 - FastAPI backend with a static dataset catalog under /api/v1
 - 5 damage categories, pre/post comparison, 3 basemap modes
-- 19 frontend unit tests (vitest) and 8 backend tests (pytest)
+- 22 frontend unit tests (vitest) and 21 backend tests (pytest)
 - Deployed to GitHub Pages by CI on every push to main
 - Supabase (PostGIS + REST) planned as the data layer once real data is wired in
 
@@ -33,7 +67,7 @@ npm run dev
 
 The project is in Phase 0: a working prototype on demo data. Real data is the current focus: evaluating satellite sources (Sentinel-1 SAR, Landsat 8/9, Maxar Open Data, Copernicus EMS, national orthophotos) and building a small pipeline to pull pre and post imagery for an event automatically.
 
-A change-detection model is planned. Once real imagery is available, it will compare pre and post scenes to flag damaged areas automatically, helping the app user decide which places need more help and when.
+I'm training a change-detection model now. Once it is ready it will compare pre and post scenes and flag damaged areas automatically, replacing the placeholder points that currently stand in for the affected zones.
 
 ## Deployment
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.schemas.damage import DatasetConfig, DamagePoint
+from app.schemas.damage import DatasetConfig, DamagePoint, TimelineConfig
 
 
 def _damage_point(
@@ -39,6 +39,8 @@ DATASETS: list[DatasetConfig] = [
         zoom=13.0,
         description="Windstorm aftermath with power and housing damage near industrial and residential blocks.",
         rawRasterUrl="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        bounds=(-9.051361, 39.717751, -8.76709, 39.783213),
+        timeline=TimelineConfig(start="2026-01-18", eventDate="2026-01-27", end="2026-03-17"),
         defaultPoints=[
             _damage_point(
                 "mg-001",

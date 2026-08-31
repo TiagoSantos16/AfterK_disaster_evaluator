@@ -38,6 +38,12 @@ class DamagePoint(BaseModel):
     properties: DamageProperties
 
 
+class TimelineConfig(BaseModel):
+    start: str
+    eventDate: str
+    end: str
+
+
 class DatasetConfig(BaseModel):
     id: str
     name: str
@@ -47,7 +53,23 @@ class DatasetConfig(BaseModel):
     description: str
     rawRasterUrl: str | None = None
     segmentationVectorUrl: str | None = None
+    bounds: tuple[float, float, float, float] | None = None
+    timeline: TimelineConfig | None = None
     defaultPoints: list[DamagePoint]
+
+
+class TimelineScene(BaseModel):
+    date: str
+    captureDate: str
+    cloudCover: float | None = None
+    tileUrlTemplate: str
+    itemId: str
+
+
+class TimelineResponse(BaseModel):
+    dataset_id: str
+    window: TimelineConfig | None = None
+    scenes: list[TimelineScene]
 
 
 class DamageListResponse(BaseModel):

@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { datasets as initialDatasets, getDefaultDataset } from "./config/datasets";
 import { CategoryColors, loadCategoryColors, saveCategoryColors } from "./config/categoryColors";
-import { normalizeDamagePoint, collectRasterBlobUrls, filterVisiblePoints } from "./utils/damage";
+import { collectRasterBlobUrls, filterVisiblePoints } from "./utils/damage";
+import { cities, findCity, CityConfig, CitySatelliteSource, SOURCE_LABELS, isSentinelSource, isDemoSourceAvailable } from "./config/cities";
+import { stopsFromScenes } from "./utils/timeline";
+import { useTimeline } from "./hooks/useTimeline";
+import TimelineBar from "./components/TimelineBar";
 import MapView from "./components/MapView";
 import NoteModal from "./components/NoteModal";
 import IncidentNoteModal from "./components/IncidentNoteModal";
@@ -18,6 +22,7 @@ import {
   IncidentNote,
   MapNote,
   TemporalState,
+  TimelineStop,
 } from "./types/dataset";
 
 type DamageFilters = Record<DamageClass, boolean>;
@@ -26,8 +31,6 @@ type IncidentAnnotation = {
   priority: boolean;
   notes: IncidentNote[];
 };
-
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "");
 
 const ESRI_WORLD_IMAGERY_URL =
   "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
@@ -53,13 +56,14 @@ function App() {
   const [availableDatasets, setAvailableDatasets] = useState<DatasetConfig[]>(initialDatasets);
   const [activeDatasetId, setActiveDatasetId] = useState<string>(defaultDataset.id);
   const [activeVariantId, setActiveVariantId] = useState<string>(defaultDataset.defaultVariantId);
-  const [basemapMode, setBasemapMode] = useState<BasemapMode>("satellite");
+  const [activeSceneDate, setActiveSceneDate] = useState<string | null>(null);
+  const [basemapMode, setBasemapMode] = useState<BasemapMode>("map");
+  const [activeCityId, setActiveCityId] = useState<string>("marinha-grande");
+  const [source, setSource] = useState<CitySatelliteSource>("sentinel-2-rgb");
   const [temporalState, setTemporalState] = useState<TemporalState>("post");
   const [activeFilters, setActiveFilters] = useState<DamageFilters>(initialFilters);
   const [categoryColors, setCategoryColors] = useState<CategoryColors>(() => loadCategoryColors());
   const [selectedPoint, setSelectedPoint] = useState<DamagePoint | null>(null);
-  const [remotePoints, setRemotePoints] = useState<DamagePoint[]>(defaultDataset.defaultPoints);
-  const [uploadedPoints, setUploadedPoints] = useState<DamagePoint[] | null>(null);
   const [mapNotes, setMapNotes] = useState<MapNote[]>([]);
   const [newNoteForm, setNewNoteForm] = useState<{ coordinates: [number, number] } | null>(null);
   const [incidentAnnotations, setIncidentAnnotations] = useState<Record<string, IncidentAnnotation>>({});
@@ -67,13 +71,31 @@ function App() {
   const [incidentNoteForm, setIncidentNoteForm] = useState<{ point: DamagePoint } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
-  const [dataSourceLabel, setDataSourceLabel] = useState<string>("Local dataset fallback");
+  const [segmentationEnabled, setSegmentationEnabled] = useState<boolean>(false);
 
   const activeDataset = useMemo(
     () => findDataset(availableDatasets, activeDatasetId),
     [availableDatasets, activeDatasetId]
   );
   const activeVariant = useMemo(() => findVariant(activeDataset, activeVariantId), [activeDataset, activeVariantId]);
+
+  const activeCity = useMemo(() => findCity(activeCityId), [activeCityId]);
+
+  const timeline = useTimeline(
+    activeDataset.id,
+    import.meta.env.VITE_API_BASE_URL,
+    true,
+    activeCity?.bbox ? [...activeCity.bbox] : null,
+    source
+  );
+  const timelineStops: TimelineStop[] = useMemo(
+    () => stopsFromScenes(timeline.scenes),
+    [timeline.scenes]
+  );
+  const selectedScene = useMemo(
+    () => timeline.scenes.find((scene) => scene.date === activeSceneDate) ?? null,
+    [timeline.scenes, activeSceneDate]
+  );
 
   useEffect(() => {
     const variantExists = activeDataset.variants.some((variant) => variant.id === activeVariantId);
@@ -83,69 +105,58 @@ function App() {
   }, [activeDataset, activeVariantId]);
 
   useEffect(() => {
-    setUploadedPoints(null);
     setSelectedPoint(null);
+    setRemovedIncidentIds(new Set());
+  }, [activeCityId]);
 
-    const controller = new AbortController();
-
-    const fetchDatasetPoints = async () => {
-      if (!apiBaseUrl) {
-        setRemotePoints(activeDataset.defaultPoints);
-        setDataSourceLabel("Local dataset fallback");
-        return;
-      }
-
-      try {
-        const response = await fetch(`${apiBaseUrl}/api/v1/damages/${activeDataset.id}`, {
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`API returned status ${response.status}`);
+  useEffect(() => {
+    if (timeline.status !== "live" || activeSceneDate || timeline.scenes.length === 0) {
+      return;
+    }
+    const eventDate = timeline.window?.eventDate;
+    const targetMs = eventDate ? Date.parse(`${eventDate}T00:00:00Z`) : Number.NaN;
+    const best = timeline.scenes.reduce(
+      (bestScene, scene) => {
+        if (!bestScene) {
+          return scene;
         }
-
-        const payload = (await response.json()) as { data?: unknown[] };
-        const normalized = (payload.data ?? []).map(normalizeDamagePoint).filter(Boolean) as DamagePoint[];
-
-        if (normalized.length > 0) {
-          setRemotePoints(normalized);
-          setDataSourceLabel("Backend API /api/v1");
-          return;
+        const distance = Math.abs(Date.parse(`${scene.date}T00:00:00Z`) - targetMs);
+        const bestDistance = Math.abs(Date.parse(`${bestScene.date}T00:00:00Z`) - targetMs);
+        if (distance < bestDistance) {
+          return scene;
         }
-
-        throw new Error("API returned empty dataset payload.");
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return;
+        if (distance === bestDistance && scene.date > bestScene.date) {
+          return scene;
         }
+        return bestScene;
+      },
+      timeline.scenes[0]
+    );
+    setActiveSceneDate(best.date);
+  }, [timeline.status, timeline.scenes, timeline.window?.eventDate, activeSceneDate]);
 
-        setRemotePoints(activeDataset.defaultPoints);
-        setDataSourceLabel("Local dataset fallback");
-      }
-    };
-
-    void fetchDatasetPoints();
-
-    return () => {
-      controller.abort();
-    };
-  }, [activeDataset.id]);
-
-  const effectivePoints = uploadedPoints ?? remotePoints;
+  const handleSourceChange = useCallback((next: CitySatelliteSource) => {
+    setSource(next);
+    setBasemapMode("satellite");
+  }, []);
 
   const visiblePoints = useMemo(() => {
-    return filterVisiblePoints(effectivePoints, activeFilters, removedIncidentIds);
-  }, [effectivePoints, activeFilters, removedIncidentIds]);
+    return filterVisiblePoints(activeCity?.defaultPoints ?? [], activeFilters, removedIncidentIds);
+  }, [activeCity?.defaultPoints, activeFilters, removedIncidentIds]);
 
-  const variantRasterUrl = activeVariant.rawRasterUrl ?? activeDataset.imageUrls?.[temporalState] ?? activeDataset.rawRasterUrl;
+  const sentinelBand = source === "sentinel-2-swir" ? "swir" : source === "sentinel-2-cir" ? "cire" : source === "sentinel-2-ndvi" ? "ndvi" : "truecolor";
+
+  const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+  const isDemo = !API_BASE;
+
   const activeRasterUrl =
-    (activeDataset.satelliteProvider ?? "esri") === "esri"
-      ? ESRI_WORLD_IMAGERY_URL
-      : (activeDataset.satelliteProvider ?? "esri") === "custom"
-        ? activeDataset.customRasterUrl ?? variantRasterUrl
-        : variantRasterUrl;
-  const activeSegmentationUrl = activeVariant.segmentationVectorUrl ?? activeDataset.segmentationVectorUrl;
-  const segmentationEnabled = false;
+    isSentinelSource(source) && selectedScene && activeSceneDate && activeCity?.bbox
+      ? API_BASE
+        ? `${API_BASE}/api/v1/imagery/sentinel2/${activeSceneDate}.png?bbox=${activeCity.bbox.join(",")}&bands=${sentinelBand}`
+        : isDemoSourceAvailable(source)
+          ? `imagery/${activeCity.id}_${sentinelBand}_${activeSceneDate}.png`
+          : ESRI_WORLD_IMAGERY_URL
+      : ESRI_WORLD_IMAGERY_URL;
 
   const handleToggleFilter = (damageClass: DamageClass) => {
     setActiveFilters((previous) => ({
@@ -169,8 +180,12 @@ function App() {
     setSelectedPoint(null);
   };
 
-  const handleVariantChange = (variantId: string) => {
-    setActiveVariantId(variantId);
+  const handleSceneChange = (date: string) => {
+    setActiveSceneDate(date);
+    const variant = activeDataset.variants.find((item) => item.id === date);
+    if (variant) {
+      setActiveVariantId(variant.id);
+    }
   };
 
   const handleRequestAddNote = useCallback((coordinates: [number, number]) => {
@@ -193,8 +208,6 @@ function App() {
     });
     setActiveDatasetId(dataset.id);
     setActiveVariantId(dataset.defaultVariantId);
-    setDataSourceLabel("Imported dataset");
-    setRemotePoints(dataset.defaultPoints);
   };
 
   const handleSaveNote = (note: MapNote) => {
@@ -236,7 +249,7 @@ function App() {
         selectedPoint={selectedPoint}
         mapNotes={mapNotes}
         rawRasterUrl={activeRasterUrl}
-        segmentationVectorUrl={activeSegmentationUrl}
+        segmentationVectorUrl={undefined}
         temporalState={temporalState}
         categoryColors={categoryColors}
         incidentAnnotations={incidentAnnotations}
@@ -245,29 +258,46 @@ function App() {
         onRemoveIncident={handleRemoveIncident}
         onRequestAddNote={handleRequestAddNote}
         onSelectPoint={setSelectedPoint}
+        cities={cities}
+        activeCityId={activeCityId}
+        onCitySelect={setActiveCityId}
+        dataLoading={timeline.status === "loading"}
       />
 
-      <Sidebar
+<Sidebar
         datasets={availableDatasets}
         activeDataset={activeDataset}
-        activeVariantId={activeVariant.id}
         basemapMode={basemapMode}
         activeFilters={activeFilters}
         points={visiblePoints}
         mapNotes={mapNotes}
         selectedPoint={selectedPoint}
         incidentAnnotations={incidentAnnotations}
-        dataSourceLabel={dataSourceLabel}
         collapsed={sidebarCollapsed}
-        temporalState={temporalState}
-        onTemporalStateChange={setTemporalState}
+        categoryColors={categoryColors}
+        timelineStatus={timeline.status}
         onToggleCollapse={() => setSidebarCollapsed((current) => !current)}
         onDatasetChange={handleDatasetChange}
-        onVariantChange={handleVariantChange}
         onBasemapChange={setBasemapMode}
         onToggleFilter={handleToggleFilter}
-        categoryColors={categoryColors}
         onCategoryColorChange={handleCategoryColorChange}
+        source={source}
+        onSourceChange={handleSourceChange}
+        demoMode={isDemo}
+        activeCityId={activeCityId}
+        onCitySelect={setActiveCityId}
+        segmentationEnabled={segmentationEnabled}
+        onSegmentationToggle={setSegmentationEnabled}
+      />
+
+      <TimelineBar
+        scenes={timeline.scenes}
+        stops={timelineStops}
+        activeSceneDate={activeSceneDate}
+        eventDate={timeline.window?.eventDate ?? undefined}
+        source={source}
+        sidebarCollapsed={sidebarCollapsed}
+        onSceneChange={handleSceneChange}
       />
 
       <button

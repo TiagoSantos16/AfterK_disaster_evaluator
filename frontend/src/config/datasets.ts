@@ -36,6 +36,7 @@ export const datasets: DatasetConfig[] = [
     satelliteProvider: "esri",
     segmentationSource: "osm-vector",
     bounds: [-9.051361, 39.717751, -8.76709, 39.783213],
+    timeline: { start: "2026-01-18", eventDate: "2026-01-27", end: "2026-03-17" },
     variants: [
       {
         id: "pre-storm-2026-01-18",

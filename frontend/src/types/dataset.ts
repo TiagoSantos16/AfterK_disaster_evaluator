@@ -9,6 +9,7 @@ export type LayerMode = "raw" | "segmentation" | "split";
 export type BasemapMode = "map" | "satellite" | "osm";
 export type TemporalState = "pre" | "post";
 
+export type CitySatelliteSource = "sentinel-2-rgb" | "sentinel-2-swir" | "sentinel-2-cir" | "sentinel-2-ndvi" | "esri";
 export type SatelliteProvider = "esri" | "sar" | "custom";
 export type SegmentationSource = "osm-vector" | "none";
 
@@ -20,6 +21,34 @@ export interface DatasetVariant {
   segmentationVectorUrl?: string;
   bounds?: [number, number, number, number];
 }
+
+export interface TimelineWindow {
+  start: string;
+  eventDate: string;
+  end: string;
+}
+
+export type TimelineStatus = "loading" | "live" | "fallback";
+
+export interface TimelineScene {
+  date: string;
+  captureDate: string;
+  cloudCover: number | null;
+  tileUrlTemplate: string;
+  itemId: string;
+}
+
+export interface TimelineResponse {
+  dataset_id: string;
+  window: TimelineWindow | null;
+  scenes: TimelineScene[];
+}
+
+export type TimelineStop = {
+  key: string;
+  date: string;
+  label: string;
+};
 
 export interface DamagePoint {
   type: "Feature";
@@ -52,6 +81,7 @@ export interface DatasetConfig {
   variants: DatasetVariant[];
   defaultVariantId: string;
   bounds?: [number, number, number, number];
+  timeline?: TimelineWindow;
   imageUrls?: {
     pre?: string;
     post?: string;
